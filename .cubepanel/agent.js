@@ -49,6 +49,8 @@ function api(method, path, body, headers) {
 const post = (path, body) => api("POST", path, body);
 const get = (path) => api("GET", path);
 
+let publicAddress = null;
+
 async function reportMetrics() {
   const total = os.totalmem();
   const free = os.freemem();
@@ -66,6 +68,7 @@ async function reportMetrics() {
       live_tps: lastTps,
       live_uptime_seconds: uptime,
       agent_status: mc ? "running" : "connected",
+      public_address: publicAddress,
     },
   });
 }
@@ -90,7 +93,7 @@ function parseLogLine(line) {
       announcePlayer("join", name);
     }
   }
-  // Player leave: "Steve lost connection: ..." or "Steve left the game"
+  // Player leave
   const leave = line.match(/(?:^|: )([A-Za-z0-9_]{2,16}) (?:lost connection|left the game)/);
   if (leave) {
     const name = leave[1];
@@ -99,9 +102,31 @@ function parseLogLine(line) {
       announcePlayer("leave", name);
     }
   }
-  // TPS lines (Paper: "TPS from last 1m, 5m, 15m: 20.0, ...")
+  // TPS lines (Paper)
   const tps = line.match(/TPS from last 1m[^\d]+([\d\.]+)/);
   if (tps) lastTps = Math.min(20, parseFloat(tps[1]));
+  // playit.gg public address: "tcp://yourname.playit.gg:12345" or "minecraft.yourname.playit.gg:12345"
+  const playit = line.match(/([a-zA-Z0-9-]+\.playit\.gg(?::\d+)?)/);
+  if (playit) publicAddress = playit[1];
+}
+
+let playitProc = null;
+function startPlayit() {
+  if (playitProc) return;
+  const playitBin = path.join(__dirname, "playit");
+  if (!fs.existsSync(playitBin)) { LOG_BUF.push("[CubePanel] playit não instalado — pula tunnel."); return; }
+  LOG_BUF.push("[CubePanel] A iniciar túnel playit.gg (visita o link em baixo para autorizar 1x)...");
+  playitProc = spawn(playitBin, [], { cwd: __dirname, shell: false });
+  const handle = (d) => {
+    const s = d.toString();
+    for (const line of s.split(/\r?\n/).filter(Boolean)) {
+      LOG_BUF.push("[playit] " + line);
+      parseLogLine(line);
+    }
+  };
+  playitProc.stdout.on("data", handle);
+  playitProc.stderr.on("data", handle);
+  playitProc.on("exit", () => { playitProc = null; LOG_BUF.push("[CubePanel] playit parou."); });
 }
 
 async function ensureJar() {
@@ -125,14 +150,35 @@ async function ensureJar() {
   }
 }
 
-function startServer() {
+async function startServer() {
   if (mc) return;
-  if (!ensureJar()) return;
-  const cmd = process.env.CUBEPANEL_JAVA_CMD || "java -Xms2G -Xmx4G -jar server.jar nogui";
-  LOG_BUF.push("[CubePanel] $ " + cmd);
-  mc = spawn(cmd, { cwd: SERVER_DIR, shell: true });
+  const ok = await ensureJar();
+  if (!ok) return;
+  const jarPath = path.join(SERVER_DIR, "server.jar");
+  if (!fs.existsSync(jarPath)) {
+    LOG_BUF.push("[CubePanel] ERRO: server.jar não encontrado em " + jarPath + ". Configura o tipo/versão no painel e clica 'Resolver JAR'.");
+    return;
+  }
+  // Parse CUBEPANEL_JAVA_CMD into argv (no shell). Defaults to safe args.
+  const raw = (process.env.CUBEPANEL_JAVA_CMD || "java -Xms2G -Xmx4G -jar server.jar nogui").trim();
+  const tokens = raw.match(/(?:[^\s"]+|"[^"]*")+/g) || ["java"];
+  const argv = tokens.map((t) => t.replace(/^"|"$/g, ""));
+  const bin = argv.shift() || "java";
+  LOG_BUF.push("[CubePanel] $ " + bin + " " + argv.join(" "));
+  startPlayit();
+  try {
+    mc = spawn(bin, argv, { cwd: SERVER_DIR, shell: false, stdio: ["pipe", "pipe", "pipe"] });
+  } catch (e) {
+    LOG_BUF.push("[CubePanel] Falha ao arrancar Java: " + e.message + ". Verifica se 'java' está no PATH (java -version).");
+    mc = null;
+    return;
+  }
   startedAt = Date.now();
   players.clear();
+  mc.on("error", (err) => {
+    LOG_BUF.push("[CubePanel] Erro de processo Java: " + err.message + (err.code === "ENOENT" ? " (binário 'java' não encontrado no PATH)" : ""));
+    mc = null; startedAt = null;
+  });
   const handle = (data) => {
     const s = data.toString();
     const split = s.split(/\r?\n/).filter(Boolean);
@@ -141,8 +187,8 @@ function startServer() {
       parseLogLine(line);
     }
   };
-  mc.stdout.on("data", handle);
-  mc.stderr.on("data", (d) => {
+  mc.stdout && mc.stdout.on("data", handle);
+  mc.stderr && mc.stderr.on("data", (d) => {
     const s = "[STDERR] " + d.toString();
     LOG_BUF.push(s);
   });
