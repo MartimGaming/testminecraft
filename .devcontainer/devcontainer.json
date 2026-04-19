@@ -1,0 +1,41 @@
+{
+  "name": "CubePanel Minecraft Server",
+  "image": "mcr.microsoft.com/devcontainers/java:1-21-bookworm",
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "20"
+    }
+  },
+  "forwardPorts": [
+    25565,
+    25575
+  ],
+  "portsAttributes": {
+    "25565": {
+      "label": "Minecraft",
+      "onAutoForward": "notify"
+    },
+    "25575": {
+      "label": "RCON"
+    }
+  },
+  "postCreateCommand": "chmod +x .cubepanel/bootstrap.sh && .cubepanel/bootstrap.sh",
+  "postStartCommand": "nohup node .cubepanel/agent.js > .cubepanel/agent.log 2>&1 &",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "vscjava.vscode-java-pack"
+      ]
+    }
+  },
+  "hostRequirements": {
+    "cpus": 2,
+    "memory": "4gb",
+    "storage": "32gb"
+  },
+  "containerEnv": {
+    "CUBEPANEL_SUPABASE_URL": "https://tdoxrhbuelynvghngeyb.supabase.co",
+    "CUBEPANEL_AGENT_TOKEN": "1dc26bf8949b69cc9cd01f6a44f32a6a5e36f532062c1eacd8109fcd6350a531",
+    "CUBEPANEL_JAVA_CMD": "java -Xms2G -Xmx4G -jar server.jar nogui"
+  }
+}
