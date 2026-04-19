@@ -20,7 +20,7 @@
     }
   },
   "postCreateCommand": "chmod +x .cubepanel/bootstrap.sh && .cubepanel/bootstrap.sh",
-  "postStartCommand": "nohup node .cubepanel/agent.js > .cubepanel/agent.log 2>&1 &",
+  "postStartCommand": "nohup node agent.js > agent.log 2>&1 &",
   "customizations": {
     "vscode": {
       "extensions": [
